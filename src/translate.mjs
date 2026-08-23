@@ -55,9 +55,12 @@ export function responsesRequestToChat(request, defaults = {}) {
     if (request[key] !== undefined) body[key] = request[key];
   }
   if (request.tools !== undefined) {
-    body.tools = request.tools.map((tool) => tool.type === "function" && tool.function === undefined
-      ? { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }
-      : tool);
+    body.tools = request.tools
+      .filter((tool) => tool.type === "function")
+      .map((tool) => tool.function === undefined
+        ? { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }
+        : tool);
+    if (body.tools.length === 0) delete body.tools;
   }
   if (request.reasoning?.effort) body.reasoning_effort = request.reasoning.effort;
   return body;

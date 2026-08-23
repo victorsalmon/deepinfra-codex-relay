@@ -9,7 +9,10 @@ test("translates Responses input, instructions, and function tools to Chat Compl
     input: [{ role: "user", content: [{ type: "input_text", text: "Hello" }] }],
     max_output_tokens: 80,
     stream: true,
-    tools: [{ type: "function", name: "lookup", description: "Look up a value", parameters: { type: "object" } }]
+    tools: [
+      { type: "function", name: "lookup", description: "Look up a value", parameters: { type: "object" } },
+      { type: "web_search_preview" }
+    ]
   });
   assert.deepEqual(result.messages, [{ role: "system", content: "Be concise." }, { role: "user", content: "Hello" }]);
   assert.equal(result.max_tokens, 80);
