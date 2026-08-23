@@ -1,0 +1,13 @@
+{
+  "name": "@clocklobster/deepinfra-codex-relay",
+  "version": "0.1.0",
+  "description": "Local OpenAI Responses protocol relay for DeepInfra Chat Completions.",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  }
+}
