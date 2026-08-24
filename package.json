@@ -5,6 +5,25 @@
   "license": "MIT",
   "type": "module",
   "private": false,
+  "author": "Clock Lobster",
+  "keywords": [
+    "deepinfra",
+    "openai",
+    "responses",
+    "codex",
+    "relay",
+    "adapter",
+    "chat-completions",
+    "ai"
+  ],
+  "homepage": "https://github.com/victorsalmon/deepinfra-codex-relay#readme",
+  "bugs": {
+    "url": "https://github.com/victorsalmon/deepinfra-codex-relay/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/victorsalmon/deepinfra-codex-relay.git"
+  },
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node src/server.mjs",
