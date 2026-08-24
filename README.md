@@ -1,12 +1,24 @@
 # DeepInfra Codex Relay
 
-Local protocol adapter for using DeepInfra Chat Completions models from clients
-that speak the OpenAI Responses API, including Codex.
+[![CI](https://github.com/victorsalmon/deepinfra-codex-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/victorsalmon/deepinfra-codex-relay/actions/workflows/ci.yml)
+[![Node >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-The relay listens on loopback only and forwards `POST /v1/responses` to
-DeepInfra's OpenAI-compatible Chat Completions endpoint. It supports normal and
-server-sent-event streaming, system instructions, text input, function tools,
-and tool results. It is intentionally not a public network service.
+Use DeepInfra-hosted chat models as if they were an OpenAI **Responses** API endpoint.
+This tiny Node.js relay sits on your loopback interface and translates between the
+OpenAI Responses protocol (used by tools like Codex) and DeepInfra's OpenAI-compatible
+Chat Completions endpoint. No credentials are stored in the repo, no `.env` files are
+committed, and the token is sent only in the upstream `Authorization` header.
+
+## What it does
+
+- Accepts `POST /v1/responses` in the OpenAI Responses shape.
+- Converts the request to a DeepInfra Chat Completions body (model, messages, tools,
+  `max_tokens`, `temperature`, streaming, etc.).
+- Streams or returns the upstream response, mapping deltas and tool calls back to
+  `response.output_text.delta`, `response.function_call_arguments.delta`, and final
+  `response.completed` events.
+- Provides a `GET /health` endpoint for quick checks.
 
 ## Run
 
@@ -14,22 +26,35 @@ Node.js 20 or newer is required.
 
 Set `DEEPINFRA_TOKEN` only in the process environment, then start the server:
 
+```bash
+export DEEPINFRA_TOKEN="<runtime-only-token>"
+node src/server.mjs
+```
+
 ```powershell
 $env:DEEPINFRA_TOKEN = "<runtime-only-token>"
 node .\src\server.mjs
 ```
 
-For the configured AWS secret, use the included wrapper. It injects the
-`DEEPINFRA_TOKEN` field into the child process without printing or writing the
-secret:
+Optional environment variables (see `.env.example`):
 
-```powershell
-.\scripts\start-with-aws.ps1
+- `DEEPINFRA_MODEL` — default model sent to DeepInfra.
+- `DEEPINFRA_BASE_URL` — override the upstream Chat Completions endpoint.
+- `HOST` — bind host (default `127.0.0.1`).
+- `PORT` — bind port (default `8787`).
+
+The repository contains no token, `.env` file, or credential fallback. `.env.example`
+is placeholder-only and `.gitignore` excludes local secret files.
+
+## Check the relay
+
+```bash
+curl http://127.0.0.1:8787/health
 ```
 
-The repository contains no token, `.env` file, AWS profile contents, or
-credential fallback. `.env.example` is placeholder-only and `.gitignore`
-excludes local secret files.
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/health
+```
 
 ## Codex configuration
 
@@ -51,17 +76,33 @@ model_provider = "deepinfra-relay"
 model_reasoning_effort = "medium"
 ```
 
-The relay must be running before Codex sends a request. Check it with:
+The relay must be running before Codex sends a request.
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8787/health
-```
+## Architecture / How it works
+
+The relay is a plain `node:http` server with two responsibilities:
+
+1. **Translation** (`src/translate.mjs`) turns an OpenAI Responses request into a
+   Chat Completions request. System `instructions` become a `system` message, the
+   `input` array is mapped to `user`/`assistant`/`tool` messages, and function
+   `tools` are rewritten to the Chat Completions tool format. Streaming is preserved.
+2. **Proxy** (`src/server.mjs`) forwards the translated body to
+   `https://api.deepinfra.com/v1/openai/chat/completions` with your token in the
+   `Authorization` header. For non-streaming calls it returns a single Responses-shaped
+   JSON object; for streaming calls it emits Server-Sent Events that mirror the
+   OpenAI Responses streaming event vocabulary.
+
+Because the server binds to `127.0.0.1` by default, the token and traffic never leave
+your machine unless you choose to expose it.
 
 ## Development
+
+```bash
+npm test
+```
 
 ```powershell
 npm test
 ```
 
-DeepInfra remains the credential boundary: the token is sent only in the
-upstream `Authorization` header and is never logged by this project.
+`npm test` runs the built-in Node.js test runner against the translation logic.
