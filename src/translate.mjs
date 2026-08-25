@@ -4,6 +4,11 @@ const IMAGE_CONTENT_TYPES = new Set(["input_image", "image_url"]);
 const DEFAULT_TOOL_ARGUMENTS = "{}";
 const IMAGE_OMITTED = "[image: omitted]";
 const IMAGE_PLACEHOLDER = "[image]";
+const MS_PER_SECOND = 1000;
+
+function nowInSeconds() {
+  return Math.floor(Date.now() / MS_PER_SECOND);
+}
 
 export function makeId(prefix, rawId = undefined) {
   return rawId ? `${prefix}_${rawId}` : `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -114,9 +119,9 @@ export function chatResponseToResponse(chat, requestedModel) {
   return {
     id: makeId("resp", chat.id),
     object: "response",
-    created_at: chat.created ?? Math.floor(Date.now() / 1000),
+    created_at: chat.created ?? nowInSeconds(),
     status: "completed",
-    completed_at: chat.created ?? Math.floor(Date.now() / 1000),
+    completed_at: chat.created ?? nowInSeconds(),
     error: null,
     incomplete_details: null,
     model: chat.model ?? requestedModel,
