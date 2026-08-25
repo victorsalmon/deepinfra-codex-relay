@@ -1,6 +1,13 @@
 import http from "node:http";
 import { chatResponseToResponse, errorResponse, makeId, responsesRequestToChat, textOfChatDelta } from "./translate.mjs";
 
+const HTTP_STATUS = { OK: 200, BAD_REQUEST: 400, NOT_FOUND: 404, INTERNAL_SERVER_ERROR: 500 };
+const CONTENT_TYPE = { JSON: "application/json; charset=utf-8", JSON_PLAIN: "application/json", SSE: "text/event-stream" };
+const SSE = { DATA_PREFIX: "data: ", DONE: "[DONE]", DELIMITER: "\n\n" };
+const MAX_ERROR_BODY_PREVIEW_LENGTH = 1000;
+const DEFAULT_OUTPUT_INDEX = 0;
+const DEFAULT_CONTENT_INDEX = 0;
+
 const config = {
   host: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 8787),
@@ -10,7 +17,7 @@ const config = {
 };
 
 function sendJson(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, { "content-type": CONTENT_TYPE.JSON });
   res.end(JSON.stringify(body));
 }
 
@@ -21,24 +28,24 @@ async function parseRequestBody(req) {
 }
 
 function sendSse(res, event, data) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}${SSE.DELIMITER}`);
 }
 
 async function handleResponses(request, res) {
-  if (!config.token) return sendJson(res, 500, errorResponse("DEEPINFRA_TOKEN is not set", "missing_credentials"));
+  if (!config.token) return sendJson(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, errorResponse("DEEPINFRA_TOKEN is not set", "missing_credentials"));
   const chatRequest = responsesRequestToChat(request, config);
   const upstream = await fetch(config.baseUrl, {
     method: "POST",
-    headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${config.token}`, "content-type": CONTENT_TYPE.JSON_PLAIN },
     body: JSON.stringify(chatRequest)
   });
   if (!upstream.ok) {
     const body = await upstream.text();
-    return sendJson(res, upstream.status, errorResponse(`DeepInfra request failed (${upstream.status}): ${body.slice(0, 1000)}`));
+    return sendJson(res, upstream.status, errorResponse(`DeepInfra request failed (${upstream.status}): ${body.slice(0, MAX_ERROR_BODY_PREVIEW_LENGTH)}`));
   }
-  if (!request.stream) return sendJson(res, 200, chatResponseToResponse(await upstream.json(), chatRequest.model));
+  if (!request.stream) return sendJson(res, HTTP_STATUS.OK, chatResponseToResponse(await upstream.json(), chatRequest.model));
 
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  res.writeHead(HTTP_STATUS.OK, { "content-type": CONTENT_TYPE.SSE, "cache-control": "no-cache", connection: "keep-alive" });
   const responseId = makeId("resp");
   const messageId = makeId("msg");
   const outputText = [];
@@ -51,15 +58,15 @@ async function handleResponses(request, res) {
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const raw = line.slice(6).trim();
-      if (!raw || raw === "[DONE]") continue;
+      if (!line.startsWith(SSE.DATA_PREFIX)) continue;
+      const raw = line.slice(SSE.DATA_PREFIX.length).trim();
+      if (!raw || raw === SSE.DONE) continue;
       let delta;
       try { delta = JSON.parse(raw); } catch { continue; }
       const text = textOfChatDelta(delta);
       if (text) {
         outputText.push(text);
-        sendSse(res, "response.output_text.delta", { type: "response.output_text.delta", item_id: messageId, output_index: 0, content_index: 0, delta: text });
+        sendSse(res, "response.output_text.delta", { type: "response.output_text.delta", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, delta: text });
       }
       for (const call of delta.choices?.[0]?.delta?.tool_calls ?? []) {
         const index = call.index ?? 0;
@@ -75,27 +82,27 @@ async function handleResponses(request, res) {
     }
   }
   const fullText = outputText.join("");
-  sendSse(res, "response.output_text.done", { type: "response.output_text.done", item_id: messageId, output_index: 0, content_index: 0, text: fullText });
-  sendSse(res, "response.content_part.done", { type: "response.content_part.done", item_id: messageId, output_index: 0, content_index: 0, part: { type: "output_text", text: fullText, annotations: [] } });
-  sendSse(res, "response.output_item.done", { type: "response.output_item.done", output_index: 0, item: { type: "message", id: messageId, status: "completed", role: "assistant", content: [{ type: "output_text", text: fullText, annotations: [] }] } });
+  sendSse(res, "response.output_text.done", { type: "response.output_text.done", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, text: fullText });
+  sendSse(res, "response.content_part.done", { type: "response.content_part.done", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, part: { type: "output_text", text: fullText, annotations: [] } });
+  sendSse(res, "response.output_item.done", { type: "response.output_item.done", output_index: DEFAULT_OUTPUT_INDEX, item: { type: "message", id: messageId, status: "completed", role: "assistant", content: [{ type: "output_text", text: fullText, annotations: [] }] } });
   const streamedOutput = [{ type: "message", id: messageId, status: "completed", role: "assistant", content: [{ type: "output_text", text: fullText, annotations: [] }] }];
   for (const call of toolCalls.values()) {
     sendSse(res, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: call.id, output_index: streamedOutput.length, arguments: call.arguments });
     streamedOutput.push({ type: "function_call", id: call.id, call_id: call.id, name: call.name, arguments: call.arguments, status: "completed" });
   }
   sendSse(res, "response.completed", { type: "response.completed", response: { id: responseId, object: "response", status: "completed", model: chatRequest.model, output: streamedOutput, output_text: fullText, usage: null } });
-  res.write("data: [DONE]\n\n");
+  res.write(`${SSE.DATA_PREFIX}${SSE.DONE}${SSE.DELIMITER}`);
   res.end();
 }
 
 export function createServer() {
   return http.createServer(async (req, res) => {
     try {
-      if (req.method === "GET" && req.url === "/health") return sendJson(res, 200, { ok: true, model: config.model });
-      if (req.method !== "POST" || req.url !== "/v1/responses") return sendJson(res, 404, errorResponse("Use POST /v1/responses", "not_found"));
+      if (req.method === "GET" && req.url === "/health") return sendJson(res, HTTP_STATUS.OK, { ok: true, model: config.model });
+      if (req.method !== "POST" || req.url !== "/v1/responses") return sendJson(res, HTTP_STATUS.NOT_FOUND, errorResponse("Use POST /v1/responses", "not_found"));
       await handleResponses(await parseRequestBody(req), res);
     } catch (error) {
-      sendJson(res, 400, errorResponse(error instanceof Error ? error.message : "Invalid request", "invalid_request"));
+      sendJson(res, HTTP_STATUS.BAD_REQUEST, errorResponse(error instanceof Error ? error.message : "Invalid request", "invalid_request"));
     }
   });
 }

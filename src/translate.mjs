@@ -1,4 +1,9 @@
-const roleNames = new Set(["system", "user", "assistant", "tool"]);
+const SUPPORTED_ROLES = new Set(["system", "user", "assistant", "tool"]);
+const TEXT_CONTENT_TYPES = new Set(["input_text", "output_text", "text"]);
+const IMAGE_CONTENT_TYPES = new Set(["input_image", "image_url"]);
+const DEFAULT_TOOL_ARGUMENTS = "{}";
+const IMAGE_OMITTED = "[image: omitted]";
+const IMAGE_PLACEHOLDER = "[image]";
 
 export function makeId(prefix, rawId = undefined) {
   return rawId ? `${prefix}_${rawId}` : `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -9,15 +14,15 @@ function textOfContent(content) {
   if (!Array.isArray(content)) return "";
   return content.map((part) => {
     if (typeof part === "string") return part;
-    if (part.type === "input_text" || part.type === "output_text" || part.type === "text") return part.text ?? "";
-    if (part.type === "input_image" || part.type === "image_url") return part.image_url ? "[image: omitted]" : "[image]";
+    if (TEXT_CONTENT_TYPES.has(part.type)) return part.text ?? "";
+    if (IMAGE_CONTENT_TYPES.has(part.type)) return part.image_url ? IMAGE_OMITTED : IMAGE_PLACEHOLDER;
     return "";
   }).filter(Boolean).join("\n");
 }
 
 function responseItemToChatMessage(item) {
   if (!item || typeof item !== "object") return null;
-  if (roleNames.has(item.role)) {
+  if (SUPPORTED_ROLES.has(item.role)) {
     return { role: item.role, content: textOfContent(item.content) };
   }
   if (item.type === "function_call_output") {
@@ -27,7 +32,7 @@ function responseItemToChatMessage(item) {
     return { role: "assistant", content: null, tool_calls: [{
       id: item.call_id ?? item.id,
       type: "function",
-      function: { name: item.name, arguments: item.arguments ?? "{}" }
+      function: { name: item.name, arguments: item.arguments ?? DEFAULT_TOOL_ARGUMENTS }
     }] };
   }
   return null;
@@ -95,7 +100,7 @@ function outputFromChoice(choice) {
       id: call.id,
       call_id: call.id,
       name: call.function?.name ?? "",
-      arguments: call.function?.arguments ?? "{}",
+      arguments: call.function?.arguments ?? DEFAULT_TOOL_ARGUMENTS,
       status: "completed"
     });
   }
