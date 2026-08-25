@@ -1,5 +1,5 @@
 import http from "node:http";
-import { chatResponseToResponse, errorResponse, responsesRequestToChat, textOfChatDelta } from "./translate.mjs";
+import { chatResponseToResponse, errorResponse, makeId, responsesRequestToChat, textOfChatDelta } from "./translate.mjs";
 
 const config = {
   host: process.env.HOST ?? "127.0.0.1",
@@ -39,8 +39,8 @@ async function handleResponses(request, res) {
   if (!request.stream) return sendJson(res, 200, chatResponseToResponse(await upstream.json(), chatRequest.model));
 
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  const responseId = `resp_${crypto.randomUUID().replaceAll("-", "")}`;
-  const messageId = `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+  const responseId = makeId("resp");
+  const messageId = makeId("msg");
   const outputText = [];
   const toolCalls = new Map();
   sendSse(res, "response.created", { type: "response.created", response: { id: responseId, object: "response", status: "in_progress", model: chatRequest.model, output: [], usage: null } });

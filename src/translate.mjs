@@ -1,5 +1,9 @@
 const roleNames = new Set(["system", "user", "assistant", "tool"]);
 
+export function makeId(prefix, rawId = undefined) {
+  return rawId ? `${prefix}_${rawId}` : `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
 function textOfContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -80,7 +84,7 @@ function outputFromChoice(choice) {
   const text = textOfContent(message.content);
   if (text) output.push({
     type: "message",
-    id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
+    id: makeId("msg"),
     status: "completed",
     role: "assistant",
     content: [{ type: "output_text", text, annotations: [] }]
@@ -103,7 +107,7 @@ export function chatResponseToResponse(chat, requestedModel) {
   const output = outputFromChoice(choice);
   const text = output.find((item) => item.type === "message")?.content?.[0]?.text ?? "";
   return {
-    id: `resp_${chat.id ?? crypto.randomUUID().replaceAll("-", "")}`,
+    id: makeId("resp", chat.id),
     object: "response",
     created_at: chat.created ?? Math.floor(Date.now() / 1000),
     status: "completed",
