@@ -19,6 +19,26 @@ export function makeId(prefix, rawId = undefined) {
   return rawId ? `${prefix}_${rawId}` : `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
+/** Build one `output_text` content part. */
+export function buildOutputTextPart(text) {
+  return { type: "output_text", text, annotations: [] };
+}
+
+/** Build the full `content` array for an assistant message. */
+export function buildOutputTextContent(text) {
+  return [buildOutputTextPart(text)];
+}
+
+/** Build an assistant message output item. */
+export function buildAssistantMessage({ id, text }) {
+  return { type: "message", id, status: "completed", role: "assistant", content: buildOutputTextContent(text) };
+}
+
+/** Build a function call output item. */
+export function buildFunctionCall({ id, name, args }) {
+  return { type: "function_call", id, call_id: id, name, arguments: args, status: "completed" };
+}
+
 /**
  * Flatten a Responses content value (string, array of parts, or single part)
  * into a single text string suitable for Chat Completions `content`. Image
@@ -122,22 +142,13 @@ function outputFromChoice(choice) {
   const message = choice?.message ?? {};
   const output = [];
   const text = textOfContent(message.content);
-  if (text) output.push({
-    type: "message",
-    id: makeId("msg"),
-    status: "completed",
-    role: "assistant",
-    content: [{ type: "output_text", text, annotations: [] }]
-  });
+  if (text) output.push(buildAssistantMessage({ id: makeId("msg"), text }));
   for (const call of message.tool_calls ?? []) {
-    output.push({
-      type: "function_call",
+    output.push(buildFunctionCall({
       id: call.id,
-      call_id: call.id,
       name: call.function?.name ?? "",
-      arguments: call.function?.arguments ?? DEFAULT_TOOL_ARGUMENTS,
-      status: "completed"
-    });
+      args: call.function?.arguments ?? DEFAULT_TOOL_ARGUMENTS
+    }));
   }
   return output;
 }

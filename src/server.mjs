@@ -1,5 +1,5 @@
 import http from "node:http";
-import { chatResponseToResponse, errorResponse, makeId, responsesRequestToChat, textOfChatDelta } from "./translate.mjs";
+import { buildAssistantMessage, buildFunctionCall, buildOutputTextPart, chatResponseToResponse, errorResponse, makeId, responsesRequestToChat, textOfChatDelta } from "./translate.mjs";
 
 const HTTP_STATUS = { OK: 200, BAD_REQUEST: 400, NOT_FOUND: 404, INTERNAL_SERVER_ERROR: 500 };
 const CONTENT_TYPE = { JSON: "application/json; charset=utf-8", JSON_PLAIN: "application/json", SSE: "text/event-stream" };
@@ -101,12 +101,12 @@ async function handleResponses(request, res) {
   }
   const fullText = outputText.join("");
   sendSse(res, "response.output_text.done", { type: "response.output_text.done", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, text: fullText });
-  sendSse(res, "response.content_part.done", { type: "response.content_part.done", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, part: { type: "output_text", text: fullText, annotations: [] } });
-  sendSse(res, "response.output_item.done", { type: "response.output_item.done", output_index: DEFAULT_OUTPUT_INDEX, item: { type: "message", id: messageId, status: "completed", role: "assistant", content: [{ type: "output_text", text: fullText, annotations: [] }] } });
-  const streamedOutput = [{ type: "message", id: messageId, status: "completed", role: "assistant", content: [{ type: "output_text", text: fullText, annotations: [] }] }];
+  sendSse(res, "response.content_part.done", { type: "response.content_part.done", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, part: buildOutputTextPart(fullText) });
+  sendSse(res, "response.output_item.done", { type: "response.output_item.done", output_index: DEFAULT_OUTPUT_INDEX, item: buildAssistantMessage({ id: messageId, text: fullText }) });
+  const streamedOutput = [buildAssistantMessage({ id: messageId, text: fullText })];
   for (const call of toolCalls.values()) {
     sendSse(res, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: call.id, output_index: streamedOutput.length, arguments: call.arguments });
-    streamedOutput.push({ type: "function_call", id: call.id, call_id: call.id, name: call.name, arguments: call.arguments, status: "completed" });
+    streamedOutput.push(buildFunctionCall({ id: call.id, name: call.name, args: call.arguments }));
   }
   sendSse(res, "response.completed", { type: "response.completed", response: { id: responseId, object: "response", status: "completed", model: chatRequest.model, output: streamedOutput, output_text: fullText, usage: null } });
   res.write(`${SSE.DATA_PREFIX}${SSE.DONE}${SSE.DELIMITER}`);
