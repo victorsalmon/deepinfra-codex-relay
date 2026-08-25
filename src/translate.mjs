@@ -6,14 +6,25 @@ const IMAGE_OMITTED = "[image: omitted]";
 const IMAGE_PLACEHOLDER = "[image]";
 const MS_PER_SECOND = 1000;
 
+/** Return the current Unix timestamp in seconds. */
 function nowInSeconds() {
   return Math.floor(Date.now() / MS_PER_SECOND);
 }
 
+/**
+ * Build a prefixed identifier. When a raw upstream id is supplied, reuse it
+ * (e.g. `resp_${chat.id}`); otherwise generate a stripped UUID.
+ */
 export function makeId(prefix, rawId = undefined) {
   return rawId ? `${prefix}_${rawId}` : `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
+/**
+ * Flatten a Responses content value (string, array of parts, or single part)
+ * into a single text string suitable for Chat Completions `content`. Image
+ * parts are replaced with placeholders because this adapter does not transmit
+ * image bytes to DeepInfra.
+ */
 function textOfContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -25,6 +36,10 @@ function textOfContent(content) {
   }).filter(Boolean).join("\n");
 }
 
+/**
+ * Convert a single Responses input item into a Chat Completions message.
+ * Returns `null` for unsupported items so callers can skip them.
+ */
 function responseItemToChatMessage(item) {
   if (!item || typeof item !== "object") return null;
   if (SUPPORTED_ROLES.has(item.role)) {
@@ -34,6 +49,8 @@ function responseItemToChatMessage(item) {
     return { role: "tool", tool_call_id: item.call_id ?? item.id, content: textOfContent(item.output) };
   }
   if (item.type === "function_call") {
+    // Chat Completions represents a tool call as an assistant message with a
+    // `tool_calls` array and `content: null`.
     return { role: "assistant", content: null, tool_calls: [{
       id: item.call_id ?? item.id,
       type: "function",
@@ -43,6 +60,10 @@ function responseItemToChatMessage(item) {
   return null;
 }
 
+/**
+ * Build the Chat Completions `messages` array from a Responses `input` value
+ * and optional `instructions` (which become a system message).
+ */
 export function responsesInputToChatMessages(input, instructions) {
   const messages = [];
   if (instructions) messages.push({ role: "system", content: textOfContent(instructions) });
@@ -57,6 +78,10 @@ export function responsesInputToChatMessages(input, instructions) {
   return messages;
 }
 
+/**
+ * Translate an OpenAI Responses request into a DeepInfra Chat Completions
+ * request. Applies defaults, maps messages/tools, and preserves streaming.
+ */
 export function responsesRequestToChat(request, defaults = {}) {
   const body = {
     model: request.model ?? defaults.model,
@@ -80,6 +105,7 @@ export function responsesRequestToChat(request, defaults = {}) {
   return body;
 }
 
+/** Map DeepInfra token-usage field names to the Responses API shape. */
 function usageOf(usage = {}) {
   return {
     input_tokens: usage.prompt_tokens ?? 0,
@@ -88,6 +114,10 @@ function usageOf(usage = {}) {
   };
 }
 
+/**
+ * Build the `output` array for a Responses response from a single Chat
+ * Completions choice (one assistant message plus any tool calls).
+ */
 function outputFromChoice(choice) {
   const message = choice?.message ?? {};
   const output = [];
@@ -112,6 +142,11 @@ function outputFromChoice(choice) {
   return output;
 }
 
+/**
+ * Convert a full DeepInfra Chat Completions response into an OpenAI Responses
+ * response. Falls back to a generated id and the current Unix time when the
+ * upstream payload omits them.
+ */
 export function chatResponseToResponse(chat, requestedModel) {
   const choice = chat.choices?.[0] ?? {};
   const output = outputFromChoice(choice);
@@ -132,10 +167,12 @@ export function chatResponseToResponse(chat, requestedModel) {
   };
 }
 
+/** Build a standard Responses-style error envelope. */
 export function errorResponse(message, code = "upstream_error") {
   return { error: { message, type: "invalid_request_error", code } };
 }
 
+/** Extract the text delta from a Chat Completions streaming chunk. */
 export function textOfChatDelta(delta) {
   return textOfContent(delta?.choices?.[0]?.delta?.content);
 }

@@ -16,23 +16,34 @@ const config = {
   baseUrl: process.env.DEEPINFRA_BASE_URL ?? "https://api.deepinfra.com/v1/openai/chat/completions"
 };
 
+/** Write a JSON response with the given HTTP status and close the socket. */
 function sendJson(res, status, body) {
   res.writeHead(status, { "content-type": CONTENT_TYPE.JSON });
   res.end(JSON.stringify(body));
 }
 
+/** Read the full request body and parse it as JSON, falling back to an empty object. */
 async function parseRequestBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
+/** Write one Server-Sent Event line to the response stream. */
 function sendSse(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}${SSE.DELIMITER}`);
 }
 
+/**
+ * Relay a single OpenAI Responses request to DeepInfra's Chat Completions
+ * endpoint and translate the response back. Non-streaming requests return a
+ * single JSON response; streaming requests emit an SSE event stream.
+ */
 async function handleResponses(request, res) {
+  // Return 500 (not 401) because the missing token is a deployment issue, not
+  // a credential supplied by the caller.
   if (!config.token) return sendJson(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, errorResponse("DEEPINFRA_TOKEN is not set", "missing_credentials"));
+
   const chatRequest = responsesRequestToChat(request, config);
   const upstream = await fetch(config.baseUrl, {
     method: "POST",
@@ -50,8 +61,12 @@ async function handleResponses(request, res) {
   const messageId = makeId("msg");
   const outputText = [];
   const toolCalls = new Map();
+
   sendSse(res, "response.created", { type: "response.created", response: { id: responseId, object: "response", status: "in_progress", model: chatRequest.model, output: [], usage: null } });
   sendSse(res, "response.in_progress", { type: "response.in_progress", response: { id: responseId, object: "response", status: "in_progress", model: chatRequest.model } });
+
+  // Accumulate partial SSE lines across fetch chunks; the last (possibly
+  // incomplete) line is kept in the buffer for the next chunk.
   let buffer = "";
   for await (const chunk of upstream.body) {
     buffer += Buffer.from(chunk).toString("utf8");
@@ -60,6 +75,7 @@ async function handleResponses(request, res) {
     for (const line of lines) {
       if (!line.startsWith(SSE.DATA_PREFIX)) continue;
       const raw = line.slice(SSE.DATA_PREFIX.length).trim();
+      // The [DONE] sentinel is the standard OpenAI-style stream terminator.
       if (!raw || raw === SSE.DONE) continue;
       let delta;
       try { delta = JSON.parse(raw); } catch { continue; }
@@ -68,6 +84,8 @@ async function handleResponses(request, res) {
         outputText.push(text);
         sendSse(res, "response.output_text.delta", { type: "response.output_text.delta", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, delta: text });
       }
+      // Accumulate tool-call fragments by index so deltas for the same call
+      // are stitched back together before we emit the completed call.
       for (const call of delta.choices?.[0]?.delta?.tool_calls ?? []) {
         const index = call.index ?? 0;
         const existing = toolCalls.get(index) ?? { id: call.id ?? `call_${index}`, name: "", arguments: "" };
@@ -95,6 +113,7 @@ async function handleResponses(request, res) {
   res.end();
 }
 
+/** Create an HTTP server that exposes /health and /v1/responses. */
 export function createServer() {
   return http.createServer(async (req, res) => {
     try {
@@ -107,6 +126,7 @@ export function createServer() {
   });
 }
 
+// Start the relay only when this file is executed directly (e.g. `node src/server.mjs`).
 if (process.argv[1]?.toLowerCase().endsWith("server.mjs")) {
   if (!config.token) console.error("DEEPINFRA_TOKEN is not set; the relay will return a credential error.");
   createServer().listen(config.port, config.host, () => console.log(`DeepInfra Codex relay listening on http://${config.host}:${config.port}`));
