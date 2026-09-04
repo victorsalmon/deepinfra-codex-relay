@@ -10,6 +10,18 @@ OpenAI Responses protocol (used by tools like Codex) and DeepInfra's OpenAI-comp
 Chat Completions endpoint. No credentials are stored in the repo, no `.env` files are
 committed, and the token is sent only in the upstream `Authorization` header.
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Run](#run)
+- [Configuration](#configuration)
+- [API](#api)
+- [Check the relay](#check-the-relay)
+- [Codex configuration](#codex-configuration)
+- [Architecture / How it works](#architecture--how-it-works)
+- [Development](#development)
+- [Contributing](#contributing)
+
 ## What it does
 
 - Accepts `POST /v1/responses` in the OpenAI Responses shape.
@@ -36,15 +48,37 @@ $env:DEEPINFRA_TOKEN = "<runtime-only-token>"
 node .\src\server.mjs
 ```
 
-Optional environment variables (see `.env.example`):
-
-- `DEEPINFRA_MODEL` — default model sent to DeepInfra.
-- `DEEPINFRA_BASE_URL` — override the upstream Chat Completions endpoint.
-- `HOST` — bind host (default `127.0.0.1`).
-- `PORT` — bind port (default `8787`).
+Optional settings are listed under [Configuration](#configuration) below.
 
 The repository contains no token, `.env` file, or credential fallback. `.env.example`
 is placeholder-only and `.gitignore` excludes local secret files.
+
+## Configuration
+
+All settings come from the process environment (see `.env.example` for the full list):
+
+| Variable | Required | Default |
+|---|---|---|
+| `DEEPINFRA_TOKEN` | Yes | — (runtime-only; never commit a real token) |
+| `DEEPINFRA_MODEL` | No | `deepseek-ai/DeepSeek-V4-Flash-0731` |
+| `DEEPINFRA_BASE_URL` | No | `https://api.deepinfra.com/v1/openai/chat/completions` |
+| `HOST` | No | `127.0.0.1` |
+| `PORT` | No | `8787` |
+
+## API
+
+Routes implemented in `src/server.mjs`:
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/health` | `200` with `{ "ok": true, "model": "<configured model>" }` |
+| `POST` | `/v1/responses` | `200` with a Responses-shaped JSON object, or a `text/event-stream` SSE stream when the request asks for streaming |
+| any | anything else | `404` (`not_found` — "Use POST /v1/responses") |
+
+Error cases on `POST /v1/responses`: missing `DEEPINFRA_TOKEN` returns `500`
+(`missing_credentials`); an upstream DeepInfra failure is forwarded with the
+upstream status code; a malformed request body returns `400`
+(`invalid_request`).
 
 ## Check the relay
 
@@ -106,3 +140,9 @@ npm test
 ```
 
 `npm test` runs the built-in Node.js test runner against the translation logic.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Keep the relay dependency-free and
+stdlib-only, keep tests offline (stub `fetch` — never hit the live API or use
+a real token), and never commit a token or `.env` file.
