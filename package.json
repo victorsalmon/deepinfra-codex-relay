@@ -5,7 +5,13 @@
   "license": "MIT",
   "type": "module",
   "private": false,
-  "author": "Clock Lobster",
+  "author": "Victor Salmon",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "keywords": [
     "deepinfra",
     "openai",
