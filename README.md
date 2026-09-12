@@ -64,6 +64,14 @@ All settings come from the process environment (see `.env.example` for the full 
 | `DEEPINFRA_BASE_URL` | No | `https://api.deepinfra.com/v1/openai/chat/completions` |
 | `HOST` | No | `127.0.0.1` |
 | `PORT` | No | `8787` |
+| `RELAY_TOKEN` | No | — (when set, `POST /v1/responses` requires `Authorization: Bearer <token>`; when unset the relay is unauthenticated and logs a startup warning) |
+| `MAX_BODY_BYTES` | No | `1048576` (1 MiB; larger `POST /v1/responses` bodies are rejected with `413`) |
+
+Binding to a non-loopback `HOST` (for example `0.0.0.0`) without setting
+`RELAY_TOKEN` leaves the relay unauthenticated: anyone who can reach it can
+spend your DeepInfra quota. The server logs a startup warning in that case.
+Keep the default loopback bind, or put authentication (such as `RELAY_TOKEN`)
+in front of the relay before exposing it.
 
 ## API
 
@@ -76,7 +84,10 @@ Routes implemented in `src/server.mjs`:
 | any | anything else | `404` (`not_found` — "Use POST /v1/responses") |
 
 Error cases on `POST /v1/responses`: missing `DEEPINFRA_TOKEN` returns `500`
-(`missing_credentials`); an upstream DeepInfra failure is forwarded with the
+(`missing_credentials`); a missing or wrong `RELAY_TOKEN` bearer returns `401`
+(`invalid_request`) when `RELAY_TOKEN` is set; bodies over `MAX_BODY_BYTES`
+return `413` (`invalid_request`); a request that translates to zero chat
+messages returns `400` (`invalid_request`); an upstream DeepInfra failure is forwarded with the
 upstream status code; a malformed request body returns `400`
 (`invalid_request`).
 
@@ -128,6 +139,19 @@ The relay is a plain `node:http` server with two responsibilities:
 
 Because the server binds to `127.0.0.1` by default, the token and traffic never leave
 your machine unless you choose to expose it.
+
+## Data flow and logging
+
+Prompt content sent to `POST /v1/responses` is forwarded to the configured
+DeepInfra base URL (`DEEPINFRA_BASE_URL`, default
+`https://api.deepinfra.com/v1/openai/chat/completions`) as a Chat Completions
+request with your token in the upstream `Authorization` header. Retention of
+that content follows DeepInfra's API data policy.
+
+The relay logs no request or response bodies, no `Authorization` values, and
+no tokens. Startup warnings, `GET /health` responses, upstream error previews
+(truncated to 1000 characters with the operator token redacted), and SSE
+events never carry caller credentials or request bodies.
 
 ## Development
 
