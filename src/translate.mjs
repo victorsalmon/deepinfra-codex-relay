@@ -41,9 +41,12 @@ export function buildFunctionCall({ id, name, args }) {
 
 /**
  * Flatten a Responses content value (string, array of parts, or single part)
- * into a single text string suitable for Chat Completions `content`. Image
- * parts are replaced with placeholders because this adapter does not transmit
- * image bytes to DeepInfra.
+ * into a single text string suitable for Chat Completions `content`.
+ *
+ * Image-placeholder contract: image bytes are never transmitted to DeepInfra.
+ * Image parts are replaced with exact placeholder strings: `[image]` when the
+ * part carries no `image_url`, and `[image: omitted]` when it carries an
+ * `image_url` whose bytes are intentionally dropped.
  */
 function textOfContent(content) {
   if (typeof content === "string") return content;
@@ -83,8 +86,14 @@ function responseItemToChatMessage(item) {
 /**
  * Build the Chat Completions `messages` array from a Responses `input` value
  * and optional `instructions` (which become a system message).
+ *
+ * @throws {TypeError} When `input` is neither a string, an array, nor
+ *   undefined. The server maps this to a 400 `invalid_request` response.
  */
 export function responsesInputToChatMessages(input, instructions) {
+  if (input !== undefined && typeof input !== "string" && !Array.isArray(input)) {
+    throw new TypeError("input must be a string, an array, or undefined");
+  }
   const messages = [];
   if (instructions) messages.push({ role: "system", content: textOfContent(instructions) });
   if (typeof input === "string") {
@@ -101,8 +110,30 @@ export function responsesInputToChatMessages(input, instructions) {
 /**
  * Translate an OpenAI Responses request into a DeepInfra Chat Completions
  * request. Applies defaults, maps messages/tools, and preserves streaming.
+ *
+ * Validation contract (server maps these `TypeError`s to 400):
+ * - `tools`, when present, must be an array.
+ * - `reasoning.effort`, when present, must be a string.
+ * - `input`, when present, must be a string, an array, or undefined.
+ * - Each function tool must carry a `name` (checked per index); a missing
+ *   `parameters` defaults to `{ type: "object" }` (documented choice: the
+ *   least-permissive object schema, never silent `undefined`).
  */
 export function responsesRequestToChat(request, defaults = {}) {
+  if (request.tools !== undefined && !Array.isArray(request.tools)) {
+    throw new TypeError("tools must be an array or undefined");
+  }
+  if (request.reasoning !== undefined && request.reasoning !== null) {
+    if (typeof request.reasoning !== "object" || Array.isArray(request.reasoning)) {
+      throw new TypeError("reasoning must be an object or undefined");
+    }
+    if (request.reasoning.effort !== undefined && typeof request.reasoning.effort !== "string") {
+      throw new TypeError("reasoning.effort must be a string");
+    }
+  }
+  if (request.input !== undefined && typeof request.input !== "string" && !Array.isArray(request.input)) {
+    throw new TypeError("input must be a string, an array, or undefined");
+  }
   const body = {
     model: request.model ?? defaults.model,
     messages: responsesInputToChatMessages(request.input, request.instructions),
@@ -116,16 +147,35 @@ export function responsesRequestToChat(request, defaults = {}) {
   if (request.tools !== undefined) {
     body.tools = request.tools
       .filter((tool) => tool.type === "function")
-      .map((tool) => tool.function === undefined
-        ? { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }
-        : tool);
+      .map((tool, index) => {
+        if (tool.function === undefined) {
+          if (tool.name === undefined || tool.name === null || tool.name === "") {
+            throw new TypeError(`tools[${index}].name is required for function tools`);
+          }
+          return { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters ?? { type: "object" } } };
+        }
+        if (tool.function.name === undefined || tool.function.name === null || tool.function.name === "") {
+          throw new TypeError(`tools[${index}].function.name is required for function tools`);
+        }
+        return { ...tool, function: { ...tool.function, parameters: tool.function.parameters ?? { type: "object" } } };
+      });
     if (body.tools.length === 0) delete body.tools;
   }
   if (request.reasoning?.effort) body.reasoning_effort = request.reasoning.effort;
   return body;
 }
 
-/** Map DeepInfra token-usage field names to the Responses API shape. */
+/**
+ * Map DeepInfra token-usage field names to the Responses API shape.
+ *
+ * Usage contract: non-streaming paths (`chatResponseToResponse`) map
+ * `prompt_tokens`/`completion_tokens`/`total_tokens` to
+ * `input_tokens`/`output_tokens`/`total_tokens` (missing fields default to 0).
+ * Streaming paths in `src/server.mjs` report `usage: null` on
+ * `response.created` and `response.completed` events because token counts are
+ * unknown until the upstream response completes; they never synthesize usage
+ * from partial deltas.
+ */
 function usageOf(usage = {}) {
   return {
     input_tokens: usage.prompt_tokens ?? 0,
