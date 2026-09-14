@@ -21,6 +21,7 @@ committed, and the token is sent only in the upstream `Authorization` header.
 - [Architecture / How it works](#architecture--how-it-works)
 - [Development](#development)
 - [Contributing](#contributing)
+- [Data flow and logging](#data-flow-and-logging)
 
 ## What it does
 
@@ -163,7 +164,7 @@ npm test
 npm test
 ```
 
-`npm test` runs the built-in Node.js test runner against the translation logic.
+`npm test` runs the built-in Node.js test runner against the translation and server logic.
 
 ## Contributing
 

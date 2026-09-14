@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the current `main` branch and the latest
+Security fixes are applied to the current `master` branch and the latest
 published release. Older releases should be upgraded before requesting a
 backport.
 
