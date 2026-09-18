@@ -19,9 +19,9 @@ committed, and the token is sent only in the upstream `Authorization` header.
 - [Check the relay](#check-the-relay)
 - [Codex configuration](#codex-configuration)
 - [Architecture / How it works](#architecture--how-it-works)
+- [Data flow and logging](#data-flow-and-logging)
 - [Development](#development)
 - [Contributing](#contributing)
-- [Data flow and logging](#data-flow-and-logging)
 
 ## What it does
 
@@ -101,6 +101,15 @@ curl http://127.0.0.1:8787/health
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8787/health
 ```
+
+The repository also ships a runnable example (not part of the published npm
+package). With the relay running:
+
+```bash
+node examples/check-relay.mjs
+```
+
+Set `RELAY_URL` to point the example at a different origin.
 
 ## Codex configuration
 
