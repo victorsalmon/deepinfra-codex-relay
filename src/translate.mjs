@@ -1,4 +1,7 @@
-const SUPPORTED_ROLES = new Set(["system", "user", "assistant", "tool"]);
+const SUPPORTED_ROLES = new Set(["system", "developer", "user", "assistant", "tool"]);
+// Responses `developer` messages are the successor to `system`; Chat
+// Completions providers do not all accept the newer name, so normalize it.
+const CHAT_ROLE_ALIASES = new Map([["developer", "system"]]);
 const TEXT_CONTENT_TYPES = new Set(["input_text", "output_text", "text"]);
 const IMAGE_CONTENT_TYPES = new Set(["input_image", "image_url"]);
 const DEFAULT_TOOL_ARGUMENTS = "{}";
@@ -61,7 +64,7 @@ function textOfContent(content) {
 function responseItemToChatMessage(item) {
   if (!item || typeof item !== "object") return null;
   if (SUPPORTED_ROLES.has(item.role)) {
-    return { role: item.role, content: textOfContent(item.content) };
+    return { role: CHAT_ROLE_ALIASES.get(item.role) ?? item.role, content: textOfContent(item.content) };
   }
   if (item.type === "function_call_output") {
     return { role: "tool", tool_call_id: item.call_id ?? item.id, content: textOfContent(item.output) };
