@@ -71,10 +71,12 @@ function streamRequest(port, body) {
 
 async function withServer(t, env, fn) {
   const saved = {};
-  for (const key of ["DEEPINFRA_TOKEN", "RELAY_TOKEN", "MAX_BODY_BYTES", "DEEPINFRA_MODEL"]) {
+  for (const key of ["DEEPINFRA_TOKEN", "DEEPINFRA_API_KEY", "RELAY_TOKEN", "MAX_BODY_BYTES", "DEEPINFRA_MODEL"]) {
     saved[key] = process.env[key];
   }
   process.env.DEEPINFRA_TOKEN = env.token ?? STUB_TOKEN;
+  if (env.apiKey === undefined || env.apiKey === null) delete process.env.DEEPINFRA_API_KEY;
+  else process.env.DEEPINFRA_API_KEY = env.apiKey;
   if (env.relayToken === undefined || env.relayToken === null) delete process.env.RELAY_TOKEN;
   else process.env.RELAY_TOKEN = env.relayToken;
   if (env.maxBody === undefined || env.maxBody === null) delete process.env.MAX_BODY_BYTES;
@@ -413,6 +415,41 @@ test("client close aborts the upstream fetch", async (t) => {
       await new Promise((resolve) => setTimeout(resolve, 300));
       assert.ok(observedSignal, "upstream fetch did not receive an abort signal");
       assert.equal(abortFired, true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("DEEPINFRA_API_KEY alias is used when DEEPINFRA_TOKEN is unset, with TOKEN taking precedence", async (t) => {
+  const savedToken = process.env.DEEPINFRA_TOKEN;
+  const savedAlias = process.env.DEEPINFRA_API_KEY;
+  try {
+    delete process.env.DEEPINFRA_TOKEN;
+    process.env.DEEPINFRA_API_KEY = "alias-token-value";
+    const { getConfig } = await import("../src/server.mjs");
+    assert.equal(getConfig().token, "alias-token-value");
+
+    process.env.DEEPINFRA_TOKEN = "primary-token-value";
+    assert.equal(getConfig().token, "primary-token-value");
+  } finally {
+    if (savedToken === undefined) delete process.env.DEEPINFRA_TOKEN;
+    else process.env.DEEPINFRA_TOKEN = savedToken;
+    if (savedAlias === undefined) delete process.env.DEEPINFRA_API_KEY;
+    else process.env.DEEPINFRA_API_KEY = savedAlias;
+  }
+
+  // End-to-end through the relay: alias authenticates upstream when TOKEN is unset.
+  await withServer(t, { relayToken: null, unsetToken: true, apiKey: "alias-token-value" }, async (port) => {
+    let seenAuth = "";
+    const restore = stubFetch(async (url, opts = {}) => {
+      seenAuth = opts.headers?.authorization ?? "";
+      return upstreamJson({ choices: [{ message: { content: "Hi" } }] });
+    });
+    try {
+      const res = await post(port, "/v1/responses", { body: VALID_BODY });
+      assert.equal(res.status, 200);
+      assert.equal(seenAuth, "Bearer alias-token-value");
     } finally {
       restore();
     }

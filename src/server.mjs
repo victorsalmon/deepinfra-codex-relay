@@ -14,6 +14,12 @@ const DEFAULT_CONTENT_INDEX = 0;
 // items start at 1. Delta and done events must agree on that mapping.
 const FIRST_TOOL_CALL_OUTPUT_INDEX = 1;
 
+// Single source for the RELAY_TOKEN startup-warning text: both
+// getStartupWarnings() and the direct-execution startup log share it so the
+// user-facing message cannot drift between the two sites.
+const RELAY_TOKEN_NOT_SET_FRAGMENT = "RELAY_TOKEN is not set";
+const RELAY_TOKEN_UNAUTHENTICATED_WARNING = `${RELAY_TOKEN_NOT_SET_FRAGMENT}; POST /v1/responses is unauthenticated.`;
+
 /** Maximum POST body size in bytes (configurable via MAX_BODY_BYTES, default 1 MiB). */
 export function getMaxBodyBytes() {
   const raw = process.env.MAX_BODY_BYTES;
@@ -55,10 +61,10 @@ export function isLoopbackHost(host) {
 export function getStartupWarnings(cfg = getConfig()) {
   const warnings = [];
   if (!cfg.relayToken) {
-    warnings.push("RELAY_TOKEN is not set; POST /v1/responses is unauthenticated.");
+    warnings.push(RELAY_TOKEN_UNAUTHENTICATED_WARNING);
   }
   if (!isLoopbackHost(cfg.host) && !cfg.relayToken) {
-    warnings.push(`HOST=${cfg.host} is non-loopback and RELAY_TOKEN is not set; the relay is unauthenticated and DeepInfra quota is exposed. Bind to loopback or set RELAY_TOKEN.`);
+    warnings.push(`HOST=${cfg.host} is non-loopback and ${RELAY_TOKEN_NOT_SET_FRAGMENT}; the relay is unauthenticated and DeepInfra quota is exposed. Bind to loopback or set RELAY_TOKEN.`);
   }
   return warnings;
 }
@@ -348,9 +354,9 @@ export function createServer() {
 if (process.argv[1]?.toLowerCase().endsWith("server.mjs")) {
   const live = getConfig();
   if (!live.token) console.error("DEEPINFRA_TOKEN is not set; the relay will return a credential error.");
-  if (!live.relayToken) console.error("RELAY_TOKEN is not set; POST /v1/responses is unauthenticated.");
+  if (!live.relayToken) console.error(RELAY_TOKEN_UNAUTHENTICATED_WARNING);
   for (const warning of getStartupWarnings(live)) {
-    if (warning.startsWith("RELAY_TOKEN is not set; POST") && !live.relayToken) continue; // already logged above
+    if (warning === RELAY_TOKEN_UNAUTHENTICATED_WARNING && !live.relayToken) continue; // already logged above
     console.error(warning);
   }
   createServer().listen(live.port, live.host, () => console.log(`DeepInfra Codex relay listening on http://${live.host}:${live.port}`));

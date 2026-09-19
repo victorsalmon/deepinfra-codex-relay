@@ -30,7 +30,7 @@
     "type": "git",
     "url": "git+https://github.com/victorsalmon/deepinfra-codex-relay.git"
   },
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=24" },
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test"

@@ -1,7 +1,7 @@
 # DeepInfra Codex Relay
 
 [![CI](https://github.com/victorsalmon/deepinfra-codex-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/victorsalmon/deepinfra-codex-relay/actions/workflows/ci.yml)
-[![Node >=20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/)
+[![Node >=24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Use DeepInfra-hosted chat models as if they were an OpenAI **Responses** API endpoint.
@@ -36,7 +36,7 @@ committed, and the token is sent only in the upstream `Authorization` header.
 
 ## Run
 
-Node.js 20 or newer is required.
+Node.js 24 or newer is required.
 
 Set `DEEPINFRA_TOKEN` only in the process environment, then start the server:
 
@@ -61,7 +61,8 @@ All settings come from the process environment (see `.env.example` for the full 
 
 | Variable | Required | Default |
 |---|---|---|
-| `DEEPINFRA_TOKEN` | Yes | — (runtime-only; never commit a real token) |
+| `DEEPINFRA_TOKEN` | Yes, unless `DEEPINFRA_API_KEY` is set | — (runtime-only; never commit a real token; takes precedence over `DEEPINFRA_API_KEY`) |
+| `DEEPINFRA_API_KEY` | Yes, unless `DEEPINFRA_TOKEN` is set | — (accepted alias for `DEEPINFRA_TOKEN`; used only when `DEEPINFRA_TOKEN` is unset) |
 | `DEEPINFRA_MODEL` | No | `deepseek-ai/DeepSeek-V4-Flash-0731` |
 | `DEEPINFRA_BASE_URL` | No | `https://api.deepinfra.com/v1/openai/chat/completions` |
 | `HOST` | No | `127.0.0.1` |
@@ -85,7 +86,7 @@ Routes implemented in `src/server.mjs`:
 | `POST` | `/v1/responses` | `200` with a Responses-shaped JSON object, or a `text/event-stream` SSE stream when the request asks for streaming |
 | any | anything else | `404` (`not_found` — "Use POST /v1/responses") |
 
-Error cases on `POST /v1/responses`: missing `DEEPINFRA_TOKEN` returns `500`
+Error cases on `POST /v1/responses`: missing `DEEPINFRA_TOKEN` (and its `DEEPINFRA_API_KEY` alias) returns `500`
 (`missing_credentials`); a missing or wrong `RELAY_TOKEN` bearer returns `401`
 (`invalid_request`) when `RELAY_TOKEN` is set; bodies over `MAX_BODY_BYTES`
 return `413` (`invalid_request`); a request that translates to zero chat

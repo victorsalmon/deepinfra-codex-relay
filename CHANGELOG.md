@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Toolchain: require Node.js 24 or newer (`.nvmrc` pins `24`, `package.json`
+  `engines` requires `>=24`); CI still resolves the toolchain from `.nvmrc`
+  with `cache: npm`.
+- CI: pin `actions/checkout@v7.0.1` and `actions/setup-node@v7.0.0` with
+  unchanged triggers and `npm ci` / `npm test` steps.
+- Config surface: document the accepted `DEEPINFRA_API_KEY` alias for
+  `DEEPINFRA_TOKEN` (`DEEPINFRA_TOKEN` takes precedence; the alias applies only
+  when `DEEPINFRA_TOKEN` is unset) in `README.md` and `.env.example`, with an
+  offline alias-precedence test in `test/server.test.mjs`.
+- Hygiene: add dependency-free `.editorconfig` (LF, UTF-8, final newline, trim
+  trailing whitespace, 2-space JS/MJS/JSON/YML indent); no new dependencies or
+  scripts.
+- `src/server.mjs` refactor: deduplicate the `RELAY_TOKEN` startup-warning text
+  behind a single message source; `getStartupWarnings()` output and
+  direct-execution startup logging are unchanged.
+
 - `src/server.mjs` streaming robustness: a mid-stream upstream failure now ends
   the SSE stream with a `response.failed` event and the `[DONE]` sentinel instead
   of throwing `ERR_HTTP_HEADERS_SENT` (an unhandled rejection that could exit the
