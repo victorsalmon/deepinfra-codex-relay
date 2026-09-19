@@ -69,6 +69,17 @@ test("round-trips assistant tool_call through chat messages to Responses output"
   assert.equal(call.name, "lookup");
   assert.equal(call.arguments, "{\"q\":\"x\"}");
 });
+test("maps a Responses developer role to a Chat Completions system message", () => {
+  const result = responsesRequestToChat({
+    model: "m",
+    input: [{ role: "developer", content: "Follow the rules." }, { role: "user", content: "hi" }]
+  });
+  assert.deepEqual(result.messages, [{ role: "system", content: "Follow the rules." }, { role: "user", content: "hi" }]);
+  const onlyDeveloper = responsesRequestToChat({ model: "m", input: [{ role: "developer", content: "dev only" }] });
+  assert.equal(onlyDeveloper.messages.length, 1);
+  assert.equal(onlyDeveloper.messages[0].role, "system");
+});
+
 test("maps a Chat Completions response to a Responses response", () => {
   const result = chatResponseToResponse({ id: "chat-1", model: "deepseek", created: 123, choices: [{ message: { role: "assistant", content: "Hi" } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } }, "fallback");
   assert.equal(result.object, "response");
