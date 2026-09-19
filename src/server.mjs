@@ -10,6 +10,9 @@ const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const MAX_SSE_LINE_BYTES = 256 * 1024;
 const DEFAULT_OUTPUT_INDEX = 0;
 const DEFAULT_CONTENT_INDEX = 0;
+// The streamed assistant message always occupies output_index 0, so tool-call
+// items start at 1. Delta and done events must agree on that mapping.
+const FIRST_TOOL_CALL_OUTPUT_INDEX = 1;
 
 /** Maximum POST body size in bytes (configurable via MAX_BODY_BYTES, default 1 MiB). */
 export function getMaxBodyBytes() {
@@ -78,9 +81,13 @@ export function isAuthorized(req, relayToken) {
   }
 }
 
-/** Write a JSON response with the given HTTP status and close the socket. */
+/**
+ * Write a JSON response with the given HTTP status and close the socket.
+ * Once headers are sent (e.g. an SSE stream has started) this is a no-op:
+ * rewriting headers would throw and leave the socket half-written.
+ */
 function sendJson(res, status, body) {
-  if (res.writableEnded || res.destroyed) return;
+  if (res.writableEnded || res.destroyed || res.headersSent) return;
   res.writeHead(status, { "content-type": CONTENT_TYPE.JSON });
   res.end(JSON.stringify(body));
 }
@@ -110,7 +117,17 @@ export async function parseRequestBody(req, maxBytes = getMaxBodyBytes()) {
     }
     chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (raw.trim() === "") return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Never surface the parser's message: Node includes a snippet of the
+    // offending input, which would echo caller prompt content in the response.
+    const error = new Error("Request body must be valid JSON");
+    error.statusCode = HTTP_STATUS.BAD_REQUEST;
+    throw error;
+  }
 }
 
 /** Write one SSE line, awaiting drain so a slow client bounds memory. */
@@ -229,15 +246,17 @@ async function handleResponses(request, res, { signal, cfg } = {}) {
           await sendSse(res, "response.output_text.delta", { type: "response.output_text.delta", item_id: messageId, output_index: DEFAULT_OUTPUT_INDEX, content_index: DEFAULT_CONTENT_INDEX, delta: text });
         }
         // Accumulate tool-call fragments by index so deltas for the same call
-        // are stitched back together before we emit the completed call.
+        // are stitched back together before we emit the completed call. The
+        // output_index is assigned on first sight and reused by the delta and
+        // done events so both agree with the final `output` array ordering.
         for (const call of delta.choices?.[0]?.delta?.tool_calls ?? []) {
           const index = call.index ?? 0;
-          const existing = toolCalls.get(index) ?? { id: call.id ?? `call_${index}`, name: "", arguments: "" };
+          const existing = toolCalls.get(index) ?? { id: call.id ?? `call_${index}`, name: "", arguments: "", outputIndex: FIRST_TOOL_CALL_OUTPUT_INDEX + toolCalls.size };
           if (call.id) existing.id = call.id;
           if (call.function?.name) existing.name += call.function.name;
           if (call.function?.arguments) {
             existing.arguments += call.function.arguments;
-            await sendSse(res, "response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", item_id: existing.id, output_index: index, delta: call.function.arguments });
+            await sendSse(res, "response.function_call_arguments.delta", { type: "response.function_call_arguments.delta", item_id: existing.id, output_index: existing.outputIndex, delta: call.function.arguments });
           }
           toolCalls.set(index, existing);
         }
@@ -246,7 +265,16 @@ async function handleResponses(request, res, { signal, cfg } = {}) {
     }
   } catch (error) {
     if (signal?.aborted || error?.name === "AbortError") return;
-    throw error;
+    // Headers are already sent (the stream opened above), so a JSON error
+    // response is impossible: emit a terminal Responses failure event and
+    // close the stream. Rethrowing here would reach the outer handler, which
+    // cannot rewrite headers and would leave the client hanging.
+    await sendSse(res, "response.failed", { type: "response.failed", response: { id: responseId, object: "response", status: "failed", model: chatRequest.model, error: { type: "upstream_error", code: "upstream_error", message: "Upstream stream failed" } } });
+    if (!res.writableEnded && !res.destroyed) {
+      res.write(`${SSE.DATA_PREFIX}${SSE.DONE}${SSE.DELIMITER}`);
+      res.end();
+    }
+    return;
   }
   if (aborted || signal?.aborted || res.writableEnded || res.destroyed) return;
   const fullText = outputText.join("");
@@ -255,7 +283,7 @@ async function handleResponses(request, res, { signal, cfg } = {}) {
   await sendSse(res, "response.output_item.done", { type: "response.output_item.done", output_index: DEFAULT_OUTPUT_INDEX, item: buildAssistantMessage({ id: messageId, text: fullText }) });
   const streamedOutput = [buildAssistantMessage({ id: messageId, text: fullText })];
   for (const call of toolCalls.values()) {
-    await sendSse(res, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: call.id, output_index: streamedOutput.length, arguments: call.arguments });
+    await sendSse(res, "response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: call.id, output_index: call.outputIndex, arguments: call.arguments });
     streamedOutput.push(buildFunctionCall({ id: call.id, name: call.name, args: call.arguments }));
   }
   await sendSse(res, "response.completed", { type: "response.completed", response: { id: responseId, object: "response", status: "completed", model: chatRequest.model, output: streamedOutput, output_text: fullText, usage: null } });
@@ -301,6 +329,12 @@ export function createServer() {
       await handleResponses(body, res, { signal: controller.signal, cfg });
     } catch (error) {
       if (controller.signal.aborted) return;
+      // Once a stream has started, headers cannot be rewritten: close the
+      // response instead of throwing an ERR_HTTP_HEADERS_SENT rejection.
+      if (res.headersSent) {
+        if (!res.writableEnded && !res.destroyed) res.end();
+        return;
+      }
       // Never echo credentials or request bodies; only the parse/validation message.
       sendJson(res, HTTP_STATUS.BAD_REQUEST, errorResponse(error instanceof Error ? error.message : "Invalid request", "invalid_request"));
     } finally {

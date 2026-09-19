@@ -42,6 +42,33 @@ function sseUpstream(chunks) {
   return { ok: true, status: 200, body: body(), json: async () => ({}), text: async () => "" };
 }
 
+function failingStreamUpstream(chunks) {
+  async function* body() {
+    for (const chunk of chunks) yield Buffer.from(chunk);
+    const error = new Error("upstream stream reset");
+    error.name = "FetchError";
+    throw error;
+  }
+  return { ok: true, status: 200, body: body(), json: async () => ({}), text: async () => "" };
+}
+
+function streamRequest(port, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: "127.0.0.1", port, path: "/v1/responses", method: "POST",
+      headers: { "content-type": "application/json" }
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
+      res.on("error", () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString("utf8") }));
+    });
+    req.on("error", reject);
+    req.write(JSON.stringify({ ...VALID_BODY, ...body }));
+    req.end();
+  });
+}
+
 async function withServer(t, env, fn) {
   const saved = {};
   for (const key of ["DEEPINFRA_TOKEN", "RELAY_TOKEN", "MAX_BODY_BYTES", "DEEPINFRA_MODEL"]) {
@@ -278,6 +305,68 @@ test("streaming contract emits the Responses SSE event sequence", async (t) => {
         assert.ok(events.text.includes(`event: ${name}`), `missing ${name}`);
       }
       assert.ok(events.text.includes("data: [DONE]"));
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("mid-stream upstream failure closes the stream instead of crashing", async (t) => {
+  await withServer(t, { relayToken: null }, async (port) => {
+    const restore = stubFetch(async () => failingStreamUpstream([
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+    ]));
+    try {
+      const events = await streamRequest(port, { stream: true });
+      assert.equal(events.status, 200);
+      assert.ok(events.text.includes("event: response.failed"), "expected a terminal response.failed event");
+      assert.ok(events.text.includes("data: [DONE]"), "expected the stream to be closed");
+      assert.ok(events.text.includes("response.output_text.delta"), "partial output should still be delivered");
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("streaming tool-call deltas and done events share one output_index", async (t) => {
+  await withServer(t, { relayToken: null }, async (port) => {
+    const restore = stubFetch(async () => sseUpstream([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"q\\":"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"x\\"}"}}]}}]}\n\n',
+      "data: [DONE]\n\n"
+    ]));
+    try {
+      const events = await streamRequest(port, { stream: true });
+      const delta = [...events.text.matchAll(/"type":"response\.function_call_arguments\.delta"[^\n]*/g)];
+      const done = [...events.text.matchAll(/"type":"response\.function_call_arguments\.done"[^\n]*/g)];
+      assert.equal(delta.length, 2);
+      assert.equal(done.length, 1);
+      for (const match of delta) assert.match(match[0], /"output_index":1\b/);
+      assert.match(done[0][0], /"output_index":1\b/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("malformed JSON body is rejected without echoing the body", async (t) => {
+  await withServer(t, { relayToken: null }, async (port) => {
+    const res = await post(port, "/v1/responses", { body: 'secret-prompt-oops' });
+    assert.equal(res.status, 400);
+    assert.match(res.text, /invalid_request/);
+    assert.doesNotMatch(res.text, /secret-prompt-oops/);
+  });
+});
+
+test("developer-role-only input is translated instead of rejected", async (t) => {
+  await withServer(t, { relayToken: null }, async (port) => {
+    const restore = stubFetch(async () => upstreamJson({ choices: [{ message: { content: "Hi" } }] }));
+    try {
+      const res = await post(port, "/v1/responses", {
+        body: { model: "m", input: [{ role: "developer", content: "Follow the rules." }] }
+      });
+      assert.equal(res.status, 200);
+      assert.match(res.text, /"object":"response"/);
     } finally {
       restore();
     }
