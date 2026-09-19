@@ -30,7 +30,8 @@ committed, and the token is sent only in the upstream `Authorization` header.
   `max_tokens`, `temperature`, streaming, etc.).
 - Streams or returns the upstream response, mapping deltas and tool calls back to
   `response.output_text.delta`, `response.function_call_arguments.delta`, and final
-  `response.completed` events.
+  `response.completed` events. A mid-stream upstream failure closes the stream with a
+  `response.failed` event and `[DONE]` instead of dropping the connection.
 - Provides a `GET /health` endpoint for quick checks.
 
 ## Run
@@ -89,8 +90,8 @@ Error cases on `POST /v1/responses`: missing `DEEPINFRA_TOKEN` returns `500`
 (`invalid_request`) when `RELAY_TOKEN` is set; bodies over `MAX_BODY_BYTES`
 return `413` (`invalid_request`); a request that translates to zero chat
 messages returns `400` (`invalid_request`); an upstream DeepInfra failure is forwarded with the
-upstream status code; a malformed request body returns `400`
-(`invalid_request`).
+upstream status code; a malformed JSON body returns `400`
+(`invalid_request`) with a generic message (the parser's input snippet is never echoed back).
 
 ## Check the relay
 
@@ -138,9 +139,10 @@ The relay must be running before Codex sends a request.
 The relay is a plain `node:http` server with two responsibilities:
 
 1. **Translation** (`src/translate.mjs`) turns an OpenAI Responses request into a
-   Chat Completions request. System `instructions` become a `system` message, the
-   `input` array is mapped to `user`/`assistant`/`tool` messages, and function
-   `tools` are rewritten to the Chat Completions tool format. Streaming is preserved.
+   Chat Completions request. System `instructions` become a `system` message,
+   `developer` input messages are normalized to `system`, the `input` array is
+   mapped to `user`/`assistant`/`tool` messages, and function `tools` are rewritten
+   to the Chat Completions tool format. Streaming is preserved.
 2. **Proxy** (`src/server.mjs`) forwards the translated body to
    `https://api.deepinfra.com/v1/openai/chat/completions` with your token in the
    `Authorization` header. For non-streaming calls it returns a single Responses-shaped
