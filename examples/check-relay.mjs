@@ -6,7 +6,7 @@
 //      node src/server.mjs
 // 2. In another shell: node examples/check-relay.mjs
 //
-// Uses only the Node.js 20+ global fetch; no dependencies.
+// Uses only the Node.js 24+ global fetch; no dependencies.
 
 const base = process.env.RELAY_URL ?? 'http://127.0.0.1:8787';
 

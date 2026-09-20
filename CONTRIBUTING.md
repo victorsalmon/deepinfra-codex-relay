@@ -5,7 +5,7 @@ dependency-free, and credential-safe.
 
 ## Setup
 
-- Use Node.js 20 or newer (see `.nvmrc`).
+- Use Node.js 24 or newer (see `.nvmrc`).
 - No install or build step — the relay is dependency-free stdlib Node.
 - Copy nothing: set runtime-only values in the process environment
   (see `.env.example`). Never commit a real token.
